@@ -74,6 +74,7 @@ type ShownMessage = StartMessage & { i: number; pending?: boolean };
 const BODY = { fontFamily: 'var(--font-body)', fontStyle: 'normal' } as const;
 const GENERIC_ERROR = 'That didn’t go through. Your work is still here. Please try again.';
 const TIMEOUT_ERROR = 'That took too long to come back. Your message is still here — send it again.';
+const TIMEOUT_REVIEW_ERROR = 'That took too long to come back. Your work is still here — check it again.';
 const LIMIT_ERROR = 'This start has used up its turns. Start something else to keep going.';
 const LONG_ERROR = 'This conversation is getting long. Start something else to keep going.';
 const STALE_ERROR = 'This start changed in another tab. Showing the latest step.';
@@ -311,6 +312,8 @@ export default function StartPage() {
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** LIGHT tier: the composer never unmounts, so focus it once `busy` clears instead of via attachComposer. */
   const lightFocus = useRef(false);
+  /** Text a chip or "Make this easier" sent that the composer never held, so Try again can resend it. */
+  const retryText = useRef<string | null>(null);
 
   // Phase views mount only after AnimatePresence finishes the exit animation,
   // so focus is requested from the mounting element rather than a timer.
@@ -345,6 +348,10 @@ export default function StartPage() {
       focusTarget.current = null;
       el.focus({ preventScroll: true });
     }
+  }, []);
+  /** The thread remounts after a FULL dwell at scrollTop 0; open it on the newest exchange. */
+  const attachThread = useCallback((el: HTMLElement | null) => {
+    if (el) el.scrollTop = el.scrollHeight;
   }, []);
   const attachRetry = useCallback((el: HTMLButtonElement | null) => {
     if (el && focusTarget.current === 'retry') {
@@ -573,6 +580,7 @@ export default function StartPage() {
     // Departure tier is decided by what the user did; the return is staged by what comes back.
     const tier: ConsiderTier = first || withImages || fromProposal ? 'full' : 'light';
     const urls = contextFiles.map((f) => URL.createObjectURL(f));
+    retryText.current = text === input ? null : trimmed;
     setArrival(null);
     setEnding('settle');
     setRetryAction(null);
@@ -598,15 +606,17 @@ export default function StartPage() {
     setBusy('guide');
     setError('');
     try {
+      // The controller exists before the upload so a Stop pressed during it still skips the model call.
+      const controller = new AbortController();
+      abortRef.current = controller;
       const imageUrls = contextFiles.length > 0 ? await uploadMultipleImages(uid, contextFiles, 'context') : [];
+      if (controller.signal.aborted) throw new DOMException('Aborted', 'AbortError');
       const userMessage: StartMessage = imageUrls.length
         ? { role: 'user', text: trimmed || 'Here are the task instructions.', imageUrls }
         : { role: 'user', text: trimmed };
       const messages = [...start.messages, userMessage];
       const contextImageUrls = [...start.contextImageUrls, ...imageUrls];
 
-      const controller = new AbortController();
-      abortRef.current = controller;
       const res = await fetch('/api/start/guide', {
         method: 'POST',
         headers: await jsonHeaders(),
@@ -624,6 +634,14 @@ export default function StartPage() {
       const data = await readJson<GuideResponse>(res);
       if (!res.ok || data.error) throw new Error(data.error || GENERIC_ERROR);
 
+      // The return is staged by what came back. Decided before persisting: in the LIGHT
+      // tier the view stays mounted, so the reply bubble and proposal card mount on the
+      // persist render and must already see `arrival` and the focus target.
+      setArrival(data.proposal ? 'propose' : 'ask');
+      if (data.proposal) focusTarget.current = 'proposal';
+      else if (tier === 'light') lightFocus.current = true;
+      else focusTarget.current = 'composer';
+
       // Persist during the dwell; the frame fills in as Capy learns the task.
       await persist({
         ...start,
@@ -639,10 +657,6 @@ export default function StartPage() {
       });
       if (data.proposal) setMinutes(data.proposal.minutes);
       await sleep(considerFloor(tier, reduced) - (Date.now() - startedAt));
-      setArrival(data.proposal ? 'propose' : 'ask');
-      if (data.proposal) focusTarget.current = 'proposal';
-      else if (tier === 'light') lightFocus.current = true;
-      else focusTarget.current = 'composer';
       // The stage's exit is the settle; the view returns from the companion's side.
       setConsider(null);
       setInput('');
@@ -650,6 +664,9 @@ export default function StartPage() {
     } catch (e) {
       setEnding('fade');
       setConsider(null);
+      // A failed persist must not leave the staged return or a second focus target behind.
+      setArrival(null);
+      lightFocus.current = false;
       if (isAbort(e)) {
         // Their words and files are untouched; this is a choice, not a failure.
         if (tier === 'light') lightFocus.current = true;
@@ -754,9 +771,10 @@ export default function StartPage() {
     setError('');
     cancelCelebration();
     try {
-      const proofImageUrls = proofFiles.length > 0 ? await uploadMultipleImages(uid, proofFiles, 'proof') : [];
       const controller = new AbortController();
       abortRef.current = controller;
+      const proofImageUrls = proofFiles.length > 0 ? await uploadMultipleImages(uid, proofFiles, 'proof') : [];
+      if (controller.signal.aborted) throw new DOMException('Aborted', 'AbortError');
       const res = await fetch('/api/start/review', {
         method: 'POST',
         headers: await jsonHeaders(),
@@ -771,7 +789,7 @@ export default function StartPage() {
         signal: controller.signal,
       });
       abortRef.current = null;
-      if (res.status === 504) throw new Error(TIMEOUT_ERROR);
+      if (res.status === 504) throw new Error(TIMEOUT_REVIEW_ERROR);
       const data = await readJson<ReviewResponse>(res);
       if (!res.ok || data.error) throw new Error(data.error || GENERIC_ERROR);
 
@@ -824,6 +842,7 @@ export default function StartPage() {
     } catch (e) {
       setEnding('fade');
       setConsider(null);
+      setArrival(null);
       if (isAbort(e)) {
         focusTarget.current = 'work';
         showNotice('Stopped. Your work is still here — check it whenever you’re ready.');
@@ -948,8 +967,15 @@ export default function StartPage() {
   // LIGHT tier's optimistic user bubble keyed exactly as its persisted twin will be.
   const shownOffset = phase === 'proposal' ? Math.max(0, start.messages.length - 2) : 0;
   const shownMessages: ShownMessage[] = (phase === 'proposal' ? start.messages.slice(-2) : start.messages).map((m, k) => ({ ...m, i: k + shownOffset }));
-  const lightPending = consider?.tier === 'light' && start.messages.length === consider.baseline;
-  if (lightPending) shownMessages.push({ role: 'user', text: consider.echo.text, i: consider.baseline, pending: true });
+  const lightSending = consider?.tier === 'light';
+  if (lightSending) {
+    if (start.messages.length === consider.baseline) {
+      shownMessages.push({ role: 'user', text: consider.echo.text, i: consider.baseline, pending: true });
+    } else if (shownMessages[shownMessages.length - 1]?.role === 'assistant') {
+      // Persist landed mid-dwell: hold the reply until release so the pending bubble hands over in place.
+      shownMessages.pop();
+    }
+  }
 
   // ── Loading ────────────────────────────────────────────────────
   if (loading) {
@@ -957,7 +983,7 @@ export default function StartPage() {
       <div className="gradient-start min-h-screen flex items-center justify-center">
         <div className="flex gap-1.5" role="status" aria-label="Loading">
           {[0, 1, 2].map((i) => (
-            <div key={i} className="w-2.5 h-2.5 rounded-full bg-coral animate-pulse motion-reduce:animate-none" style={{ animationDelay: `${i * 0.2}s` }} />
+            <div key={i} className={`w-2.5 h-2.5 rounded-full bg-coral ${reduced ? '' : 'animate-pulse motion-reduce:animate-none'}`} style={{ animationDelay: `${i * 0.2}s` }} />
           ))}
         </div>
       </div>
@@ -972,7 +998,7 @@ export default function StartPage() {
         <button
           type="button"
           ref={attachRetry}
-          onClick={() => (retryAction === 'review' ? void review() : void sendMessage(input))}
+          onClick={() => (retryAction === 'review' ? void review() : void sendMessage(retryText.current ?? input))}
           className="flex-shrink-0 font-semibold underline underline-offset-4 hover:opacity-70"
         >
           Try again
@@ -1002,7 +1028,6 @@ export default function StartPage() {
   // ── Composer (shared by welcome + conversation + proposal) ─────
   // LIGHT tier: the card dims and the text turns transparent (state untouched) so
   // the words appear once, in the optimistic bubble, and are visibly back on error or stop.
-  const lightSending = consider?.tier === 'light';
   const composer = (
     <>
       <div
@@ -1171,11 +1196,17 @@ export default function StartPage() {
               animate={{ x: 0, opacity: 1 }}
               transition={{ duration: 0.5, delay: 0.15 }}
               aria-label="Start a task with Capy"
-              aria-busy={Boolean(consider)}
               className="min-w-0 [overflow-wrap:anywhere]"
             >
+              {/* Persist flips `started` mid-dwell; the strip grows in rather than shoving the stage down. */}
               {started && (
-                <div className="flex items-center gap-3 text-xs mb-4">
+                <motion.div
+                  initial={reduced ? { opacity: 0 } : { height: 0, opacity: 0 }}
+                  animate={{ height: 'auto', opacity: 1 }}
+                  transition={{ duration: 0.3, ease: CONSIDER_EASE_OUT }}
+                  className="overflow-hidden -my-0.5"
+                >
+                <div className="flex items-center gap-3 text-xs py-0.5 mb-4">
                   {journeyStep('Find a start', phase === 'conversation' || phase === 'proposal')}
                   <span className="w-5 h-px bg-near-black/10" aria-hidden="true" />
                   {journeyStep('Take the step', phase === 'working')}
@@ -1191,6 +1222,7 @@ export default function StartPage() {
                     <Plus size={15} />
                   </button>
                 </div>
+                </motion.div>
               )}
 
               <div ref={deckRef}>
@@ -1269,7 +1301,7 @@ export default function StartPage() {
                       </details>
                     )}
 
-                    <section className={`space-y-4 ${phase === 'conversation' ? 'max-h-[46vh] overflow-y-auto pr-1' : ''}`} aria-label="Conversation">
+                    <section ref={attachThread} className={`space-y-4 ${phase === 'conversation' ? 'max-h-[46vh] overflow-y-auto pr-1' : ''}`} aria-label="Conversation">
                       {shownMessages.map((m) => (
                         <motion.div
                           key={`${m.role}-${m.i}-${m.text.slice(0, 12)}`}
@@ -1299,8 +1331,8 @@ export default function StartPage() {
                           )}
                         </motion.div>
                       ))}
-                      <AnimatePresence>
-                        {lightPending && (
+                      <AnimatePresence custom={{ ending }}>
+                        {lightSending && (
                           <ConsiderationBubble
                             key="pending-capy"
                             kind="guide"
@@ -1674,8 +1706,9 @@ export default function StartPage() {
 
               {lastCapy && (
                 <span className="sr-only" role="status" aria-live="polite">
-                  {lastCapy.text}
-                  {phase === 'proposal' && start.proposal ? ` Capy proposed a first step: ${start.proposal.title}` : ''}
+                  {/* Persist lands mid-dwell; the reply is read once the stage has released. */}
+                  {consider ? '' : lastCapy.text}
+                  {!consider && phase === 'proposal' && start.proposal ? ` Capy proposed a first step: ${start.proposal.title}` : ''}
                 </span>
               )}
             </motion.section>

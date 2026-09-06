@@ -96,7 +96,6 @@ function StopButton({ filled, onCancel }: { filled: boolean; onCancel: () => voi
     <button
       type="button"
       onClick={onCancel}
-      aria-label="Stop waiting for Capy"
       className={
         filled
           ? 'bg-coral/10 text-coral rounded-lg px-3 py-1.5 text-xs font-semibold hover:bg-coral/15 transition-colors'
@@ -241,6 +240,13 @@ export function ConsiderationStage({
 
 // ─── Pending bubble (LIGHT tier) ─────────────────────────────────
 
+// Handing over to the real reply (`settle`): leave at once so two Capy bubbles never
+// stack or shove each other; on error or stop (`fade`) there is nothing to hand over to.
+const bubbleVariants: Variants = {
+  exit: (c: { ending?: 'settle' | 'fade' } | undefined) =>
+    c?.ending === 'fade' ? { opacity: 0, transition: { duration: 0.18 } } : { opacity: 0, transition: { duration: 0 } },
+};
+
 export function ConsiderationBubble({
   kind,
   withImages,
@@ -263,7 +269,8 @@ export function ConsiderationBubble({
     <motion.div
       initial={{ opacity: 0, y: reduced ? 0 : 8 }}
       animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, transition: { duration: 0.18 } }}
+      variants={bubbleVariants}
+      exit="exit"
       transition={{ duration: 0.28, delay: reduced ? 0 : 0.2, ease: CONSIDER_EASE_OUT }}
       className="bg-near-black/5 rounded-2xl rounded-bl-md px-4 py-3 mr-6 sm:mr-12"
     >
