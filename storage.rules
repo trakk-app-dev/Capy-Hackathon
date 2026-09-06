@@ -1,0 +1,43 @@
+rules_version = '2';
+
+// Capy — Cloud Storage security rules
+// Project: capy-app-unbanned
+//
+// Upload paths (see src/lib/storage.ts):
+//   users/{uid}/context/{timestamp}_{name}   assignment context images
+//   users/{uid}/proof/{timestamp}_{name}     proof-of-work images
+//
+// Feedback screenshots never reach Storage — they are base64-emailed via
+// nodemailer in /api/feedback. Anything not matched below is denied.
+//
+// Deploy with:  firebase deploy --only storage
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    match /users/{uid}/{allPaths=**} {
+
+      // Read: owner only. getDownloadURL() returns a tokenized URL that
+      // Storage serves regardless of these rules, so <img src={url}> still
+      // works; un-tokenized/guessed object paths stay private.
+      allow read: if request.auth != null && request.auth.uid == uid;
+
+      // Write (upload / overwrite / delete): owner only. On upload require an
+      // image content-type under 10MB (the client compresses to <=5MB). On
+      // delete, request.resource is null, so allow it without the size/type
+      // checks.
+      allow write: if request.auth != null
+        && request.auth.uid == uid
+        && (
+          request.resource == null
+          || (
+            request.resource.size < 10 * 1024 * 1024
+            && request.resource.contentType != null
+            && request.resource.contentType.matches('image/.*')
+          )
+        );
+    }
+
+    // Everything else: default-deny.
+  }
+}
