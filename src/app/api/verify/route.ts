@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
+import { CAPY_MODEL, LEGACY_MODEL_OPTIONS } from '@/lib/model';
 
 // ─── Mock fallback (used when no API key is set) ──────────────────
 function mockVerify(taskDescription: string) {
@@ -106,8 +107,8 @@ export async function POST(request: Request) {
     });
 
     const message = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 1500,
+      model: CAPY_MODEL,
+      ...LEGACY_MODEL_OPTIONS,
       system: `You are the Capy Teacher verifying a student's work. They were supposed to: ${taskDescription}.
 
 CRITICAL VERIFICATION RULES:

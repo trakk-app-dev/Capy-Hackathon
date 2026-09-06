@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
+import { CAPY_MODEL, LEGACY_MODEL_OPTIONS } from '@/lib/model';
 
 export type CommitmentDraft = {
   title: string;
@@ -65,8 +66,8 @@ export async function POST(request: Request) {
       .join('\n');
 
     const message = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 1200,
+      model: CAPY_MODEL,
+      ...LEGACY_MODEL_OPTIONS,
       system: `You are the Capy Teacher — a nerdy, encouraging capybara. The student is refining their LONG-TERM GOAL criteria (title + what counts as done + proof type).
 
 CURRENT DRAFT (JSON):

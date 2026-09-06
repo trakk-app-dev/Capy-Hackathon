@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
+import { CAPY_MODEL, LEGACY_MODEL_OPTIONS } from '@/lib/model';
 
 const VAGUE_PATTERNS = [
   /^(be|get|become|stay)\s+(more\s+)?(productive|better|healthy|fit|organized|focused)/i,
@@ -82,8 +83,8 @@ export async function POST(request: Request) {
     const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
     const message = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 1000,
+      model: CAPY_MODEL,
+      ...LEGACY_MODEL_OPTIONS,
       system: `You are the Capy Teacher — a strict but encouraging capybara tutor who holds students accountable with long-term commitments.
 
 A student wants to set a goal with a deadline of: ${deadline}
