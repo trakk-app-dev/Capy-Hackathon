@@ -446,6 +446,19 @@
 .pet-celebrate { animation: pet-spin-celebrate 1s ease-in-out; }
 .sparkle { animation: sparkle 1.5s ease-in-out infinite; }
 
+/* /start — consideration mark: one calm breath, no urgency; never the timer's escalation classes.
+   Loops live in Motion so reduced motion can silence them; these are static paints only. */
+.consider-halo {
+  border-radius: 9999px;
+  background: radial-gradient(circle, rgba(255,126,95,0.22), rgba(196,167,231,0.10) 55%, transparent 72%);
+  filter: blur(18px);
+}
+.consider-body {
+  border-radius: 9999px;
+  background: radial-gradient(circle at 38% 34%, var(--color-peach-light) 0%, var(--color-coral) 62%, var(--color-coral-dark) 100%);
+  box-shadow: var(--shadow-glow);
+}
+
 /* ═══════════════════════════════════════════════════════════════════
    SCANNING ANIMATION (for teacher)
    ═══════════════════════════════════════════════════════════════════ */
